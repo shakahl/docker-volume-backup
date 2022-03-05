@@ -23,7 +23,7 @@ import (
 
 func (s *script) exec(containerRef string, command string) ([]byte, []byte, error) {
 	args, _ := argv.Argv(command, nil, nil)
-	execID, err := s.cli.ContainerExecCreate(context.Background(), containerRef, types.ExecConfig{
+	execID, err := s.dockerClient.ContainerExecCreate(context.Background(), containerRef, types.ExecConfig{
 		Cmd:          args[0],
 		AttachStdin:  true,
 		AttachStderr: true,
@@ -32,7 +32,7 @@ func (s *script) exec(containerRef string, command string) ([]byte, []byte, erro
 		return nil, nil, fmt.Errorf("exec: error creating container exec: %w", err)
 	}
 
-	resp, err := s.cli.ContainerExecAttach(context.Background(), execID.ID, types.ExecStartCheck{})
+	resp, err := s.dockerClient.ContainerExecAttach(context.Background(), execID.ID, types.ExecStartCheck{})
 	if err != nil {
 		return nil, nil, fmt.Errorf("exec: error attaching container exec: %w", err)
 	}
@@ -63,7 +63,7 @@ func (s *script) exec(containerRef string, command string) ([]byte, []byte, erro
 		return nil, nil, fmt.Errorf("exec: error reading stderr: %w", err)
 	}
 
-	res, err := s.cli.ContainerExecInspect(context.Background(), execID.ID)
+	res, err := s.dockerClient.ContainerExecInspect(context.Background(), execID.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("exec: error inspecting container exec: %w", err)
 	}
@@ -85,7 +85,7 @@ func (s *script) runLabeledCommands(label string) error {
 			Value: fmt.Sprintf("docker-volume-backup.exec-label=%s", s.c.ExecLabel),
 		})
 	}
-	containersWithCommand, err := s.cli.ContainerList(context.Background(), types.ContainerListOptions{
+	containersWithCommand, err := s.dockerClient.ContainerList(context.Background(), types.ContainerListOptions{
 		Quiet:   true,
 		Filters: filters.NewArgs(f...),
 	})

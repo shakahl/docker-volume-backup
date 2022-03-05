@@ -21,19 +21,15 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/leekchan/timeutil"
-	"github.com/minio/minio-go/v7"
 	"github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
-	"github.com/studio-b12/gowebdav"
 	"golang.org/x/crypto/openpgp"
 )
 
 // script holds all the stateful information required to orchestrate a
 // single backup run.
 type script struct {
-	cli          *client.Client
-	minioClient  *minio.Client
-	webdavClient *gowebdav.Client
+	dockerClient *client.Client
 	storages     []storage
 	logger       *logrus.Logger
 	sender       *router.ServiceRouter
@@ -97,7 +93,7 @@ func newScript() (*script, error) {
 		if err != nil {
 			return nil, fmt.Errorf("newScript: failed to create docker client")
 		}
-		s.cli = cli
+		s.dockerClient = cli
 	}
 
 	if s.c.AwsS3BucketName != "" {
@@ -191,7 +187,7 @@ func newScript() (*script, error) {
 }
 
 func (s *script) runCommands() (func() error, error) {
-	if s.cli == nil {
+	if s.dockerClient == nil {
 		return noop, nil
 	}
 
@@ -210,11 +206,11 @@ func (s *script) runCommands() (func() error, error) {
 // stopped during the backup and returns a function that can be called to
 // restart everything that has been stopped.
 func (s *script) stopContainers() (func() error, error) {
-	if s.cli == nil {
+	if s.dockerClient == nil {
 		return noop, nil
 	}
 
-	allContainers, err := s.cli.ContainerList(context.Background(), types.ContainerListOptions{
+	allContainers, err := s.dockerClient.ContainerList(context.Background(), types.ContainerListOptions{
 		Quiet: true,
 	})
 	if err != nil {
@@ -225,7 +221,7 @@ func (s *script) stopContainers() (func() error, error) {
 		"docker-volume-backup.stop-during-backup=%s",
 		s.c.BackupStopContainerLabel,
 	)
-	containersToStop, err := s.cli.ContainerList(context.Background(), types.ContainerListOptions{
+	containersToStop, err := s.dockerClient.ContainerList(context.Background(), types.ContainerListOptions{
 		Quiet: true,
 		Filters: filters.NewArgs(filters.KeyValuePair{
 			Key:   "label",
@@ -251,7 +247,7 @@ func (s *script) stopContainers() (func() error, error) {
 	var stoppedContainers []types.Container
 	var stopErrors []error
 	for _, container := range containersToStop {
-		if err := s.cli.ContainerStop(context.Background(), container.ID, nil); err != nil {
+		if err := s.dockerClient.ContainerStop(context.Background(), container.ID, nil); err != nil {
 			stopErrors = append(stopErrors, err)
 		} else {
 			stoppedContainers = append(stoppedContainers, container)
@@ -282,13 +278,13 @@ func (s *script) stopContainers() (func() error, error) {
 				servicesRequiringUpdate[swarmServiceName] = struct{}{}
 				continue
 			}
-			if err := s.cli.ContainerStart(context.Background(), container.ID, types.ContainerStartOptions{}); err != nil {
+			if err := s.dockerClient.ContainerStart(context.Background(), container.ID, types.ContainerStartOptions{}); err != nil {
 				restartErrors = append(restartErrors, err)
 			}
 		}
 
 		if len(servicesRequiringUpdate) != 0 {
-			services, _ := s.cli.ServiceList(context.Background(), types.ServiceListOptions{})
+			services, _ := s.dockerClient.ServiceList(context.Background(), types.ServiceListOptions{})
 			for serviceName := range servicesRequiringUpdate {
 				var serviceMatch swarm.Service
 				for _, service := range services {
@@ -301,7 +297,7 @@ func (s *script) stopContainers() (func() error, error) {
 					return fmt.Errorf("stopContainersAndRun: couldn't find service with name %s", serviceName)
 				}
 				serviceMatch.Spec.TaskTemplate.ForceUpdate = 1
-				if _, err := s.cli.ServiceUpdate(
+				if _, err := s.dockerClient.ServiceUpdate(
 					context.Background(), serviceMatch.ID,
 					serviceMatch.Version, serviceMatch.Spec, types.ServiceUpdateOptions{},
 				); err != nil {
