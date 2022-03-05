@@ -78,10 +78,34 @@ func (s *s3Storage) copy(files []string) (msgs []string, errors []error) {
 	return
 }
 
-func (s *s3Storage) delete(files []string) ([]string, []error) {
-	return nil, nil
+func (s *s3Storage) list(prefix string) ([]backupInfo, error) {
+	candidates := s.client.ListObjects(context.Background(), s.config.AwsS3BucketName, minio.ListObjectsOptions{
+		WithMetadata: true,
+		Prefix:       prefix,
+	})
+	var result []backupInfo
+	for candidate := range candidates {
+		result = append(result, backupInfo{
+			filename: candidate.Key,
+			mtime:    candidate.LastModified,
+		})
+	}
+	return result, nil
 }
 
-func (s *s3Storage) list() ([]backupInfo, error) {
-	return nil, nil
+func (s *s3Storage) delete(files []string) (messages []string, errors []error) {
+	objectsCh := make(chan minio.ObjectInfo)
+	go func() {
+		for _, file := range files {
+			objectsCh <- minio.ObjectInfo{Key: file}
+		}
+		close(objectsCh)
+	}()
+	errChan := s.client.RemoveObjects(context.Background(), s.config.AwsS3BucketName, objectsCh, minio.RemoveObjectsOptions{})
+	for result := range errChan {
+		if result.Err != nil {
+			errors = append(errors, result.Err)
+		}
+	}
+	return
 }

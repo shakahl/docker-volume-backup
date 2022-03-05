@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 )
 
 const storageIDLocal = "Local"
@@ -45,10 +46,46 @@ func (s *localStorage) copy(files []string) (messages []string, errors []error) 
 	return
 }
 
-func (s *localStorage) delete(files []string) ([]string, []error) {
-	return nil, nil
+func (s *localStorage) list(prefix string) ([]backupInfo, error) {
+	globPattern := path.Join(
+		s.config.BackupArchive,
+		fmt.Sprintf("%s*", prefix),
+	)
+	globMatches, err := filepath.Glob(globPattern)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list: error looking up matching files using pattern %s: %w",
+			globPattern,
+			err,
+		)
+	}
+
+	var candidates []backupInfo
+	for _, candidate := range globMatches {
+		fi, err := os.Lstat(candidate)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"list: error calling Lstat on file %s: %w",
+				candidate,
+				err,
+			)
+		}
+
+		if fi.Mode()&os.ModeSymlink != os.ModeSymlink {
+			candidates = append(candidates, backupInfo{
+				filename: candidate,
+				mtime:    fi.ModTime(),
+			})
+		}
+	}
+	return candidates, nil
 }
 
-func (s *localStorage) list() ([]backupInfo, error) {
-	return nil, nil
+func (s *localStorage) delete(files []string) (msgs []string, errors []error) {
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			errors = append(errors, err)
+		}
+	}
+	return
 }

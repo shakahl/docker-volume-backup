@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/studio-b12/gowebdav"
 )
@@ -52,10 +53,28 @@ func (s *webDAVStorage) copy(files []string) (messages []string, errors []error)
 	return
 }
 
-func (s *webDAVStorage) delete(files []string) ([]string, []error) {
-	return nil, nil
+func (s *webDAVStorage) list(prefix string) ([]backupInfo, error) {
+	candidates, err := s.client.ReadDir(s.config.WebdavPath)
+	if err != nil {
+		return nil, fmt.Errorf("list: error looking up candidates from remote storage: %w", err)
+	}
+	var matches []backupInfo
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate.Name(), prefix) {
+			matches = append(matches, backupInfo{
+				filename: candidate.Name(),
+				mtime:    candidate.ModTime(),
+			})
+		}
+	}
+	return matches, nil
 }
 
-func (s *webDAVStorage) list() ([]backupInfo, error) {
-	return nil, nil
+func (s *webDAVStorage) delete(files []string) (messages []string, errors []error) {
+	for _, file := range files {
+		if err := s.client.Remove(filepath.Join(s.config.WebdavPath, file)); err != nil {
+			errors = append(errors, fmt.Errorf("delete: error removing file from WebDAV storage: %w", err))
+		}
+	}
+	return
 }

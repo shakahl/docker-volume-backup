@@ -451,7 +451,7 @@ func (s *script) pruneBackups() error {
 	deadline := time.Now().AddDate(0, 0, -int(s.c.BackupRetentionDays)).Add(s.c.BackupPruningLeeway)
 
 	for _, storage := range s.storages {
-		backups, err := storage.list()
+		backups, err := storage.list(s.c.BackupPruningPrefix)
 		if err != nil {
 			return fmt.Errorf("pruneBackups: error listing files: %w", err)
 		}

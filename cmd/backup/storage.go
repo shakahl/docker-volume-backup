@@ -6,7 +6,7 @@ import (
 
 type storage interface {
 	id() storageID
-	list() ([]backupInfo, error)
+	list(prefix string) ([]backupInfo, error)
 	copy(files []string) ([]string, []error)
 	delete(files []string) ([]string, []error)
 }
