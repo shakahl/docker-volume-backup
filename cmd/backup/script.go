@@ -424,13 +424,11 @@ func (s *script) copyBackup() error {
 	}
 
 	for _, storage := range s.storages {
-		msgs, errors := storage.copy([]string{s.file})
-		for _, msg := range msgs {
-			s.logger.Info(msg)
-		}
+		errors := storage.copy([]string{s.file})
 		if len(errors) != 0 {
 			return fmt.Errorf("copyBackup: error copying file: %w", join(errors...))
 		}
+		s.logger.Info("Successfully moved a copy of backup %s to storage %s", s.file, storage.id())
 	}
 
 	return nil
@@ -464,21 +462,19 @@ func (s *script) pruneBackups() error {
 		}
 
 		if len(matches) == 0 {
-			s.logger.Infof("None of %d existing %s were pruned.", len(backups), storage.id())
+			s.logger.Infof("None of %d existing %s backups were pruned.", len(backups), storage.id())
 		} else if len(matches) == len(backups) {
 			s.logger.Warnf("The current configuration would delete all %d existing %s.", len(matches), storage.id())
 			s.logger.Warn("Refusing to do so, please check your configuration.")
 		} else {
-			msgs, errors := storage.delete(matches)
+			errors := storage.delete(matches)
 			if len(errors) != 0 {
 				if stats, ok := s.stats.Storages[storage.id()]; ok {
 					stats.PruneErrors = uint(len(errors))
 				}
 				return fmt.Errorf("pruneBackups: error deleting files for storage %s: %w", storage.id(), join(errors...))
 			}
-			for _, msg := range msgs {
-				s.logger.Infof(msg)
-			}
+			s.logger.Info("Successfully pruned %d expired backups from storage %s", len(matches), storage.id())
 		}
 	}
 

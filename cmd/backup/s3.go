@@ -64,7 +64,7 @@ func (s *s3Storage) id() storageID {
 	return storageIDS3
 }
 
-func (s *s3Storage) copy(files []string) (msgs []string, errors []error) {
+func (s *s3Storage) copy(files []string) (errors []error) {
 	for _, file := range files {
 		_, name := path.Split(file)
 		if _, err := s.client.FPutObject(context.Background(), s.config.AwsS3BucketName, filepath.Join(s.config.AwsS3Path, name), file, minio.PutObjectOptions{
@@ -73,7 +73,6 @@ func (s *s3Storage) copy(files []string) (msgs []string, errors []error) {
 			errors = append(errors, fmt.Errorf("copy: error uploading backup to remote storage: %w", err))
 			continue
 		}
-		msgs = append(msgs, fmt.Sprintf("Uploaded a copy of backup `%s` to bucket `%s`.", file, s.config.AwsS3BucketName))
 	}
 	return
 }
@@ -93,7 +92,7 @@ func (s *s3Storage) list(prefix string) ([]backupInfo, error) {
 	return result, nil
 }
 
-func (s *s3Storage) delete(files []string) (messages []string, errors []error) {
+func (s *s3Storage) delete(files []string) (errors []error) {
 	objectsCh := make(chan minio.ObjectInfo)
 	go func() {
 		for _, file := range files {

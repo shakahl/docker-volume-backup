@@ -23,7 +23,7 @@ func (s *localStorage) id() storageID {
 	return storageIDLocal
 }
 
-func (s *localStorage) copy(files []string) (messages []string, errors []error) {
+func (s *localStorage) copy(files []string) (errors []error) {
 	for _, file := range files {
 
 		_, name := path.Split(file)
@@ -31,7 +31,6 @@ func (s *localStorage) copy(files []string) (messages []string, errors []error) 
 			errors = append(errors, fmt.Errorf("copy: error copying file to local archive: %w", err))
 			continue
 		}
-		messages = append(messages, fmt.Sprintf("Stored copy of backup `%s` in local archive `%s`.", file, s.config.BackupArchive))
 		if s.config.BackupLatestSymlink != "" {
 			symlink := path.Join(s.config.BackupArchive, s.config.BackupLatestSymlink)
 			if _, err := os.Lstat(symlink); err == nil {
@@ -40,7 +39,6 @@ func (s *localStorage) copy(files []string) (messages []string, errors []error) 
 			if err := os.Symlink(name, symlink); err != nil {
 				errors = append(errors, fmt.Errorf("copy: error creating latest symlink: %w", err))
 			}
-			messages = append(messages, fmt.Sprintf("Created/Updated symlink `%s` for latest backup.", s.config.BackupLatestSymlink))
 		}
 	}
 	return
@@ -81,7 +79,7 @@ func (s *localStorage) list(prefix string) ([]backupInfo, error) {
 	return candidates, nil
 }
 
-func (s *localStorage) delete(files []string) (msgs []string, errors []error) {
+func (s *localStorage) delete(files []string) (errors []error) {
 	for _, file := range files {
 		if err := os.Remove(file); err != nil {
 			errors = append(errors, err)

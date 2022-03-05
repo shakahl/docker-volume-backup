@@ -7,8 +7,8 @@ import (
 type storage interface {
 	id() storageID
 	list(prefix string) ([]backupInfo, error)
-	copy(files []string) ([]string, []error)
-	delete(files []string) ([]string, []error)
+	copy(files []string) []error
+	delete(files []string) []error
 }
 
 type storageID string

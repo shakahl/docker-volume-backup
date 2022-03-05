@@ -32,7 +32,7 @@ func (s *webDAVStorage) id() storageID {
 	return storageIDWebDAV
 }
 
-func (s *webDAVStorage) copy(files []string) (messages []string, errors []error) {
+func (s *webDAVStorage) copy(files []string) (errors []error) {
 	for _, file := range files {
 		_, name := path.Split(file)
 		bytes, err := os.ReadFile(file)
@@ -48,7 +48,6 @@ func (s *webDAVStorage) copy(files []string) (messages []string, errors []error)
 			errors = append(errors, fmt.Errorf("copy: error uploading the file to WebDAV server: %w", err))
 			continue
 		}
-		messages = append(messages, fmt.Sprintf("Uploaded a copy of backup `%s` to WebDAV-URL '%s' at path '%s'.", file, s.config.WebdavUrl, s.config.WebdavPath))
 	}
 	return
 }
@@ -70,7 +69,7 @@ func (s *webDAVStorage) list(prefix string) ([]backupInfo, error) {
 	return matches, nil
 }
 
-func (s *webDAVStorage) delete(files []string) (messages []string, errors []error) {
+func (s *webDAVStorage) delete(files []string) (errors []error) {
 	for _, file := range files {
 		if err := s.client.Remove(filepath.Join(s.config.WebdavPath, file)); err != nil {
 			errors = append(errors, fmt.Errorf("delete: error removing file from WebDAV storage: %w", err))
