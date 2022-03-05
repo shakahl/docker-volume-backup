@@ -5,14 +5,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"text/template"
 	"time"
 
@@ -25,7 +22,6 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/leekchan/timeutil"
 	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/otiai10/copy"
 	"github.com/sirupsen/logrus"
 	"github.com/studio-b12/gowebdav"
@@ -38,6 +34,7 @@ type script struct {
 	cli          *client.Client
 	minioClient  *minio.Client
 	webdavClient *gowebdav.Client
+	storages     []storage
 	logger       *logrus.Logger
 	sender       *router.ServiceRouter
 	template     *template.Template
@@ -67,7 +64,11 @@ func newScript() (*script, error) {
 		stats: &Stats{
 			StartTime: time.Now(),
 			LogOutput: logBuffer,
-			Storages:  StoragesStats{},
+			Storages: map[storageID]StorageStats{
+				storageIDLocal:  {},
+				storageIDS3:     {},
+				storageIDWebDAV: {},
+			},
 		},
 	}
 
@@ -100,51 +101,27 @@ func newScript() (*script, error) {
 	}
 
 	if s.c.AwsS3BucketName != "" {
-		var creds *credentials.Credentials
-		if s.c.AwsAccessKeyID != "" && s.c.AwsSecretAccessKey != "" {
-			creds = credentials.NewStaticV4(
-				s.c.AwsAccessKeyID,
-				s.c.AwsSecretAccessKey,
-				"",
-			)
-		} else if s.c.AwsIamRoleEndpoint != "" {
-			creds = credentials.NewIAM(s.c.AwsIamRoleEndpoint)
-		} else {
-			return nil, errors.New("newScript: AWS_S3_BUCKET_NAME is defined, but no credentials were provided")
-		}
-
-		options := minio.Options{
-			Creds:  creds,
-			Secure: s.c.AwsEndpointProto == "https",
-		}
-
-		if s.c.AwsEndpointInsecure {
-			if !options.Secure {
-				return nil, errors.New("newScript: AWS_ENDPOINT_INSECURE = true is only meaningful for https")
-			}
-
-			transport, err := minio.DefaultTransport(true)
-			if err != nil {
-				return nil, fmt.Errorf("newScript: failed to create default minio transport")
-			}
-			transport.TLSClientConfig.InsecureSkipVerify = true
-			options.Transport = transport
-		}
-
-		mc, err := minio.New(s.c.AwsEndpoint, &options)
+		s3Storage, err := newS3Storage(s.c)
 		if err != nil {
-			return nil, fmt.Errorf("newScript: error setting up minio client: %w", err)
+			return nil, fmt.Errorf("newScript: error setting up S3 storage: %w", err)
 		}
-		s.minioClient = mc
+		s.storages = append(s.storages, s3Storage)
 	}
 
 	if s.c.WebdavUrl != "" {
-		if s.c.WebdavUsername == "" || s.c.WebdavPassword == "" {
-			return nil, errors.New("newScript: WEBDAV_URL is defined, but no credentials were provided")
-		} else {
-			webdavClient := gowebdav.NewClient(s.c.WebdavUrl, s.c.WebdavUsername, s.c.WebdavPassword)
-			s.webdavClient = webdavClient
+		webDAVStorage, err := newWebDAVStorage(s.c)
+		if err != nil {
+			return nil, fmt.Errorf("newScript: error setting up WebDAV storage: %w", err)
 		}
+		s.storages = append(s.storages, webDAVStorage)
+	}
+
+	if _, err := os.Stat(s.c.BackupArchive); !os.IsNotExist(err) {
+		localStorage, err := newLocalStorage(s.c)
+		if err != nil {
+			return nil, fmt.Errorf("newScript: error setting up local storage: %w", err)
+		}
+		s.storages = append(s.storages, localStorage)
 	}
 
 	if s.c.EmailNotificationRecipient != "" {
@@ -450,45 +427,16 @@ func (s *script) copyBackup() error {
 		}
 	}
 
-	if s.minioClient != nil {
-		if _, err := s.minioClient.FPutObject(context.Background(), s.c.AwsS3BucketName, filepath.Join(s.c.AwsS3Path, name), s.file, minio.PutObjectOptions{
-			ContentType: "application/tar+gzip",
-		}); err != nil {
-			return fmt.Errorf("copyBackup: error uploading backup to remote storage: %w", err)
+	for _, storage := range s.storages {
+		msgs, errors := storage.copy([]string{s.file})
+		for _, msg := range msgs {
+			s.logger.Info(msg)
 		}
-		s.logger.Infof("Uploaded a copy of backup `%s` to bucket `%s`.", s.file, s.c.AwsS3BucketName)
+		if len(errors) != 0 {
+			return fmt.Errorf("copyBackup: error copying file: %w", join(errors...))
+		}
 	}
 
-	if s.webdavClient != nil {
-		bytes, err := os.ReadFile(s.file)
-		if err != nil {
-			return fmt.Errorf("copyBackup: error reading the file to be uploaded: %w", err)
-		}
-		if err := s.webdavClient.MkdirAll(s.c.WebdavPath, 0644); err != nil {
-			return fmt.Errorf("copyBackup: error creating directory '%s' on WebDAV server: %w", s.c.WebdavPath, err)
-		}
-		if err := s.webdavClient.Write(filepath.Join(s.c.WebdavPath, name), bytes, 0644); err != nil {
-			return fmt.Errorf("copyBackup: error uploading the file to WebDAV server: %w", err)
-		}
-		s.logger.Infof("Uploaded a copy of backup `%s` to WebDAV-URL '%s' at path '%s'.", s.file, s.c.WebdavUrl, s.c.WebdavPath)
-	}
-
-	if _, err := os.Stat(s.c.BackupArchive); !os.IsNotExist(err) {
-		if err := copyFile(s.file, path.Join(s.c.BackupArchive, name)); err != nil {
-			return fmt.Errorf("copyBackup: error copying file to local archive: %w", err)
-		}
-		s.logger.Infof("Stored copy of backup `%s` in local archive `%s`.", s.file, s.c.BackupArchive)
-		if s.c.BackupLatestSymlink != "" {
-			symlink := path.Join(s.c.BackupArchive, s.c.BackupLatestSymlink)
-			if _, err := os.Lstat(symlink); err == nil {
-				os.Remove(symlink)
-			}
-			if err := os.Symlink(name, symlink); err != nil {
-				return fmt.Errorf("copyBackup: error creating latest symlink: %w", err)
-			}
-			s.logger.Infof("Created/Updated symlink `%s` for latest backup.", s.c.BackupLatestSymlink)
-		}
-	}
 	return nil
 }
 
@@ -502,176 +450,42 @@ func (s *script) pruneBackups() error {
 
 	deadline := time.Now().AddDate(0, 0, -int(s.c.BackupRetentionDays)).Add(s.c.BackupPruningLeeway)
 
-	// doPrune holds general control flow that applies to any kind of storage.
-	// Callers can pass in a thunk that performs the actual deletion of files.
-	var doPrune = func(lenMatches, lenCandidates int, description string, doRemoveFiles func() error) error {
-		if lenMatches != 0 && lenMatches != lenCandidates {
-			if err := doRemoveFiles(); err != nil {
-				return err
+	for _, storage := range s.storages {
+		backups, err := storage.list()
+		if err != nil {
+			return fmt.Errorf("pruneBackups: error listing files: %w", err)
+		}
+		var matches []string
+		for _, backup := range backups {
+			if backup.mtime.Before(deadline) {
+				matches = append(matches, backup.filename)
 			}
-			s.logger.Infof(
-				"Pruned %d out of %d %s as their age exceeded the configured retention period of %d days.",
-				lenMatches,
-				lenCandidates,
-				description,
-				s.c.BackupRetentionDays,
-			)
-		} else if lenMatches != 0 && lenMatches == lenCandidates {
-			s.logger.Warnf("The current configuration would delete all %d existing %s.", lenMatches, description)
+		}
+
+		s.stats.Storages[storage.id()] = StorageStats{
+			Total:  uint(len(backups)),
+			Pruned: uint(len(matches)),
+		}
+
+		if len(matches) == 0 {
+			s.logger.Infof("None of %d existing %s were pruned.", len(backups), storage.id())
+		} else if len(matches) == len(backups) {
+			s.logger.Warnf("The current configuration would delete all %d existing %s.", len(matches), storage.id())
 			s.logger.Warn("Refusing to do so, please check your configuration.")
 		} else {
-			s.logger.Infof("None of %d existing %s were pruned.", lenCandidates, description)
+			msgs, errors := storage.delete(matches)
+			if len(errors) != 0 {
+				if stats, ok := s.stats.Storages[storage.id()]; ok {
+					stats.PruneErrors = uint(len(errors))
+				}
+				return fmt.Errorf("pruneBackups: error deleting files for storage %s: %w", storage.id(), join(errors...))
+			}
+			for _, msg := range msgs {
+				s.logger.Infof(msg)
+			}
 		}
-		return nil
 	}
 
-	if s.minioClient != nil {
-		candidates := s.minioClient.ListObjects(context.Background(), s.c.AwsS3BucketName, minio.ListObjectsOptions{
-			WithMetadata: true,
-			Prefix:       s.c.BackupPruningPrefix,
-		})
-
-		var matches []minio.ObjectInfo
-		var lenCandidates int
-		for candidate := range candidates {
-			lenCandidates++
-			if candidate.Err != nil {
-				return fmt.Errorf(
-					"pruneBackups: error looking up candidates from remote storage: %w",
-					candidate.Err,
-				)
-			}
-			if candidate.LastModified.Before(deadline) {
-				matches = append(matches, candidate)
-			}
-		}
-
-		s.stats.Storages.S3 = StorageStats{
-			Total:  uint(lenCandidates),
-			Pruned: uint(len(matches)),
-		}
-
-		doPrune(len(matches), lenCandidates, "remote backup(s)", func() error {
-			objectsCh := make(chan minio.ObjectInfo)
-			go func() {
-				for _, match := range matches {
-					objectsCh <- match
-				}
-				close(objectsCh)
-			}()
-			errChan := s.minioClient.RemoveObjects(context.Background(), s.c.AwsS3BucketName, objectsCh, minio.RemoveObjectsOptions{})
-			var removeErrors []error
-			for result := range errChan {
-				if result.Err != nil {
-					removeErrors = append(removeErrors, result.Err)
-				}
-			}
-			if len(removeErrors) != 0 {
-				return join(removeErrors...)
-			}
-			return nil
-		})
-	}
-
-	if s.webdavClient != nil {
-		candidates, err := s.webdavClient.ReadDir(s.c.WebdavPath)
-		if err != nil {
-			return fmt.Errorf("pruneBackups: error looking up candidates from remote storage: %w", err)
-		}
-		var matches []fs.FileInfo
-		var lenCandidates int
-		for _, candidate := range candidates {
-			if !strings.HasPrefix(candidate.Name(), s.c.BackupPruningPrefix) {
-				continue
-			}
-			lenCandidates++
-			if candidate.ModTime().Before(deadline) {
-				matches = append(matches, candidate)
-			}
-		}
-
-		s.stats.Storages.WebDAV = StorageStats{
-			Total:  uint(lenCandidates),
-			Pruned: uint(len(matches)),
-		}
-
-		doPrune(len(matches), lenCandidates, "WebDAV backup(s)", func() error {
-			for _, match := range matches {
-				if err := s.webdavClient.Remove(filepath.Join(s.c.WebdavPath, match.Name())); err != nil {
-					return fmt.Errorf("pruneBackups: error removing file from WebDAV storage: %w", err)
-				}
-			}
-			return nil
-		})
-	}
-
-	if _, err := os.Stat(s.c.BackupArchive); !os.IsNotExist(err) {
-		globPattern := path.Join(
-			s.c.BackupArchive,
-			fmt.Sprintf("%s*", s.c.BackupPruningPrefix),
-		)
-		globMatches, err := filepath.Glob(globPattern)
-		if err != nil {
-			return fmt.Errorf(
-				"pruneBackups: error looking up matching files using pattern %s: %w",
-				globPattern,
-				err,
-			)
-		}
-
-		var candidates []string
-		for _, candidate := range globMatches {
-			fi, err := os.Lstat(candidate)
-			if err != nil {
-				return fmt.Errorf(
-					"pruneBackups: error calling Lstat on file %s: %w",
-					candidate,
-					err,
-				)
-			}
-
-			if fi.Mode()&os.ModeSymlink != os.ModeSymlink {
-				candidates = append(candidates, candidate)
-			}
-		}
-
-		var matches []string
-		for _, candidate := range candidates {
-			fi, err := os.Stat(candidate)
-			if err != nil {
-				return fmt.Errorf(
-					"pruneBackups: error calling stat on file %s: %w",
-					candidate,
-					err,
-				)
-			}
-			if fi.ModTime().Before(deadline) {
-				matches = append(matches, candidate)
-			}
-		}
-
-		s.stats.Storages.Local = StorageStats{
-			Total:  uint(len(candidates)),
-			Pruned: uint(len(matches)),
-		}
-
-		doPrune(len(matches), len(candidates), "local backup(s)", func() error {
-			var removeErrors []error
-			for _, match := range matches {
-				if err := os.Remove(match); err != nil {
-					removeErrors = append(removeErrors, err)
-				}
-			}
-			if len(removeErrors) != 0 {
-				return fmt.Errorf(
-					"pruneBackups: %d error(s) deleting local files, starting with: %w",
-					len(removeErrors),
-					join(removeErrors...),
-				)
-			}
-			return nil
-		})
-	}
 	return nil
 }
 
