@@ -105,7 +105,7 @@ func newScript() (*script, error) {
 	}
 
 	if s.c.WebdavUrl != "" {
-		webDAVStorage, err := newWebDAVStorage(s.c)
+		webDAVStorage, err := newWebDAVStorage(s.c.WebdavUrl, s.c.WebdavUsername, s.c.WebdavPassword, s.c.WebdavPath)
 		if err != nil {
 			return nil, fmt.Errorf("newScript: error setting up WebDAV storage: %w", err)
 		}
@@ -113,7 +113,7 @@ func newScript() (*script, error) {
 	}
 
 	if _, err := os.Stat(s.c.BackupArchive); !os.IsNotExist(err) {
-		localStorage, err := newLocalStorage(s.c)
+		localStorage, err := newLocalStorage(s.c.BackupArchive, s.c.BackupLatestSymlink)
 		if err != nil {
 			return nil, fmt.Errorf("newScript: error setting up local storage: %w", err)
 		}

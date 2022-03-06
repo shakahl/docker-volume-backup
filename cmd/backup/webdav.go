@@ -1,3 +1,6 @@
+// Copyright 2022 - Offen Authors <hioffen@posteo.de>
+// SPDX-License-Identifier: MPL-2.0
+
 package main
 
 import (
@@ -13,19 +16,19 @@ import (
 
 const storageIDWebDAV = "WebDAV"
 
-func newWebDAVStorage(config *Config) (storage, error) {
-	if config.WebdavUsername == "" || config.WebdavPassword == "" {
+func newWebDAVStorage(url, username, password, path string) (storage, error) {
+	if username == "" || password == "" {
 		return nil, errors.New("newWebDAVStorage: WEBDAV_URL is defined, but no credentials were provided")
 	}
 	return &webDAVStorage{
-		config: config,
-		client: gowebdav.NewClient(config.WebdavUrl, config.WebdavUsername, config.WebdavPassword),
+		client: gowebdav.NewClient(url, username, password),
+		path:   path,
 	}, nil
 }
 
 type webDAVStorage struct {
-	config *Config
 	client *gowebdav.Client
+	path   string
 }
 
 func (s *webDAVStorage) id() storageID {
@@ -40,11 +43,11 @@ func (s *webDAVStorage) copy(files []string) (errors []error) {
 			errors = append(errors, fmt.Errorf("copy: error reading the file to be uploaded: %w", err))
 			continue
 		}
-		if err := s.client.MkdirAll(s.config.WebdavPath, 0644); err != nil {
-			errors = append(errors, fmt.Errorf("copy: error creating directory '%s' on WebDAV server: %w", s.config.WebdavPath, err))
+		if err := s.client.MkdirAll(s.path, 0644); err != nil {
+			errors = append(errors, fmt.Errorf("copy: error creating directory '%s' on WebDAV server: %w", s.path, err))
 			continue
 		}
-		if err := s.client.Write(filepath.Join(s.config.WebdavPath, name), bytes, 0644); err != nil {
+		if err := s.client.Write(filepath.Join(s.path, name), bytes, 0644); err != nil {
 			errors = append(errors, fmt.Errorf("copy: error uploading the file to WebDAV server: %w", err))
 			continue
 		}
@@ -53,7 +56,7 @@ func (s *webDAVStorage) copy(files []string) (errors []error) {
 }
 
 func (s *webDAVStorage) list(prefix string) ([]backupInfo, error) {
-	candidates, err := s.client.ReadDir(s.config.WebdavPath)
+	candidates, err := s.client.ReadDir(s.path)
 	if err != nil {
 		return nil, fmt.Errorf("list: error looking up candidates from remote storage: %w", err)
 	}
@@ -71,7 +74,7 @@ func (s *webDAVStorage) list(prefix string) ([]backupInfo, error) {
 
 func (s *webDAVStorage) delete(files []string) (errors []error) {
 	for _, file := range files {
-		if err := s.client.Remove(filepath.Join(s.config.WebdavPath, file)); err != nil {
+		if err := s.client.Remove(filepath.Join(s.path, file)); err != nil {
 			errors = append(errors, fmt.Errorf("delete: error removing file from WebDAV storage: %w", err))
 		}
 	}

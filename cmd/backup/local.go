@@ -1,3 +1,6 @@
+// Copyright 2022 - Offen Authors <hioffen@posteo.de>
+// SPDX-License-Identifier: MPL-2.0
+
 package main
 
 import (
@@ -9,14 +12,16 @@ import (
 
 const storageIDLocal = "Local"
 
-func newLocalStorage(config *Config) (storage, error) {
+func newLocalStorage(archiveLocation, latestSymlink string) (storage, error) {
 	return &localStorage{
-		config: config,
+		archiveLocation: archiveLocation,
+		latestSymlink:   latestSymlink,
 	}, nil
 }
 
 type localStorage struct {
-	config *Config
+	archiveLocation string
+	latestSymlink   string
 }
 
 func (s *localStorage) id() storageID {
@@ -27,12 +32,12 @@ func (s *localStorage) copy(files []string) (errors []error) {
 	for _, file := range files {
 
 		_, name := path.Split(file)
-		if err := copyFile(file, path.Join(s.config.BackupArchive, name)); err != nil {
+		if err := copyFile(file, path.Join(s.archiveLocation, name)); err != nil {
 			errors = append(errors, fmt.Errorf("copy: error copying file to local archive: %w", err))
 			continue
 		}
-		if s.config.BackupLatestSymlink != "" {
-			symlink := path.Join(s.config.BackupArchive, s.config.BackupLatestSymlink)
+		if s.latestSymlink != "" {
+			symlink := path.Join(s.archiveLocation, s.latestSymlink)
 			if _, err := os.Lstat(symlink); err == nil {
 				os.Remove(symlink)
 			}
@@ -45,10 +50,7 @@ func (s *localStorage) copy(files []string) (errors []error) {
 }
 
 func (s *localStorage) list(prefix string) ([]backupInfo, error) {
-	globPattern := path.Join(
-		s.config.BackupArchive,
-		fmt.Sprintf("%s*", prefix),
-	)
+	globPattern := path.Join(s.archiveLocation, fmt.Sprintf("%s*", prefix))
 	globMatches, err := filepath.Glob(globPattern)
 	if err != nil {
 		return nil, fmt.Errorf(

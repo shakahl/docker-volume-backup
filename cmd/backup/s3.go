@@ -1,3 +1,6 @@
+// Copyright 2022 - Offen Authors <hioffen@posteo.de>
+// SPDX-License-Identifier: MPL-2.0
+
 package main
 
 import (
@@ -14,8 +17,9 @@ import (
 const storageIDS3 storageID = "S3"
 
 type s3Storage struct {
-	client *minio.Client
-	config *Config
+	client     *minio.Client
+	bucketName string
+	path       string
 }
 
 func newS3Storage(config *Config) (storage, error) {
@@ -55,8 +59,9 @@ func newS3Storage(config *Config) (storage, error) {
 		return nil, fmt.Errorf("newS3Storage: error setting up minio client: %w", err)
 	}
 	return &s3Storage{
-		client: mc,
-		config: config,
+		client:     mc,
+		bucketName: config.AwsS3BucketName,
+		path:       config.AwsS3Path,
 	}, nil
 }
 
@@ -67,7 +72,7 @@ func (s *s3Storage) id() storageID {
 func (s *s3Storage) copy(files []string) (errors []error) {
 	for _, file := range files {
 		_, name := path.Split(file)
-		if _, err := s.client.FPutObject(context.Background(), s.config.AwsS3BucketName, filepath.Join(s.config.AwsS3Path, name), file, minio.PutObjectOptions{
+		if _, err := s.client.FPutObject(context.Background(), s.bucketName, filepath.Join(s.path, name), file, minio.PutObjectOptions{
 			ContentType: "application/tar+gzip",
 		}); err != nil {
 			errors = append(errors, fmt.Errorf("copy: error uploading backup to remote storage: %w", err))
@@ -78,7 +83,7 @@ func (s *s3Storage) copy(files []string) (errors []error) {
 }
 
 func (s *s3Storage) list(prefix string) ([]backupInfo, error) {
-	candidates := s.client.ListObjects(context.Background(), s.config.AwsS3BucketName, minio.ListObjectsOptions{
+	candidates := s.client.ListObjects(context.Background(), s.bucketName, minio.ListObjectsOptions{
 		WithMetadata: true,
 		Prefix:       prefix,
 	})
@@ -100,7 +105,7 @@ func (s *s3Storage) delete(files []string) (errors []error) {
 		}
 		close(objectsCh)
 	}()
-	errChan := s.client.RemoveObjects(context.Background(), s.config.AwsS3BucketName, objectsCh, minio.RemoveObjectsOptions{})
+	errChan := s.client.RemoveObjects(context.Background(), s.bucketName, objectsCh, minio.RemoveObjectsOptions{})
 	for result := range errChan {
 		if result.Err != nil {
 			errors = append(errors, result.Err)
