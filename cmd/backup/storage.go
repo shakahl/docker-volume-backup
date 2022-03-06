@@ -4,14 +4,16 @@
 package main
 
 import (
+	"errors"
 	"time"
 )
 
 type storage interface {
 	id() storageID
 	list(prefix string) ([]backupInfo, error)
-	copy(files []string) []error
-	delete(files []string) []error
+	symlink(file string) error
+	copy(file string) error
+	delete(file string) error
 }
 
 type storageID string
@@ -20,3 +22,5 @@ type backupInfo struct {
 	filename string
 	mtime    time.Time
 }
+
+var errNotSupported = errors.New("method not supported")

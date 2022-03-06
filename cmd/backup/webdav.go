@@ -35,24 +35,19 @@ func (s *webDAVStorage) id() storageID {
 	return storageIDWebDAV
 }
 
-func (s *webDAVStorage) copy(files []string) (errors []error) {
-	for _, file := range files {
-		_, name := path.Split(file)
-		bytes, err := os.ReadFile(file)
-		if err != nil {
-			errors = append(errors, fmt.Errorf("copy: error reading the file to be uploaded: %w", err))
-			continue
-		}
-		if err := s.client.MkdirAll(s.path, 0644); err != nil {
-			errors = append(errors, fmt.Errorf("copy: error creating directory '%s' on WebDAV server: %w", s.path, err))
-			continue
-		}
-		if err := s.client.Write(filepath.Join(s.path, name), bytes, 0644); err != nil {
-			errors = append(errors, fmt.Errorf("copy: error uploading the file to WebDAV server: %w", err))
-			continue
-		}
+func (s *webDAVStorage) copy(file string) error {
+	_, name := path.Split(file)
+	bytes, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("copy: error reading the file to be uploaded: %w", err)
 	}
-	return
+	if err := s.client.MkdirAll(s.path, 0644); err != nil {
+		return fmt.Errorf("copy: error creating directory '%s' on WebDAV server: %w", s.path, err)
+	}
+	if err := s.client.Write(filepath.Join(s.path, name), bytes, 0644); err != nil {
+		return fmt.Errorf("copy: error uploading the file to WebDAV server: %w", err)
+	}
+	return nil
 }
 
 func (s *webDAVStorage) list(prefix string) ([]backupInfo, error) {
@@ -72,11 +67,13 @@ func (s *webDAVStorage) list(prefix string) ([]backupInfo, error) {
 	return matches, nil
 }
 
-func (s *webDAVStorage) delete(files []string) (errors []error) {
-	for _, file := range files {
-		if err := s.client.Remove(filepath.Join(s.path, file)); err != nil {
-			errors = append(errors, fmt.Errorf("delete: error removing file from WebDAV storage: %w", err))
-		}
+func (s *webDAVStorage) delete(file string) error {
+	if err := s.client.Remove(filepath.Join(s.path, file)); err != nil {
+		return fmt.Errorf("delete: error removing file from WebDAV storage: %w", err)
 	}
-	return
+	return nil
+}
+
+func (s *webDAVStorage) symlink(string) error {
+	return errNotSupported
 }

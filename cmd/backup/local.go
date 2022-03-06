@@ -28,25 +28,24 @@ func (s *localStorage) id() storageID {
 	return storageIDLocal
 }
 
-func (s *localStorage) copy(files []string) (errors []error) {
-	for _, file := range files {
-
-		_, name := path.Split(file)
-		if err := copyFile(file, path.Join(s.archiveLocation, name)); err != nil {
-			errors = append(errors, fmt.Errorf("copy: error copying file to local archive: %w", err))
-			continue
-		}
-		if s.latestSymlink != "" {
-			symlink := path.Join(s.archiveLocation, s.latestSymlink)
-			if _, err := os.Lstat(symlink); err == nil {
-				os.Remove(symlink)
-			}
-			if err := os.Symlink(name, symlink); err != nil {
-				errors = append(errors, fmt.Errorf("copy: error creating latest symlink: %w", err))
-			}
-		}
+func (s *localStorage) copy(file string) error {
+	_, name := path.Split(file)
+	if err := copyFile(file, path.Join(s.archiveLocation, name)); err != nil {
+		return fmt.Errorf("copy: error copying file to local archive: %w", err)
 	}
-	return
+	return nil
+}
+
+func (s *localStorage) symlink(file string) error {
+	_, name := path.Split(file)
+	symlink := path.Join(s.archiveLocation, s.latestSymlink)
+	if _, err := os.Lstat(symlink); err == nil {
+		os.Remove(symlink)
+	}
+	if err := os.Symlink(name, symlink); err != nil {
+		return fmt.Errorf("symlink: error creating latest symlink: %w", err)
+	}
+	return nil
 }
 
 func (s *localStorage) list(prefix string) ([]backupInfo, error) {
@@ -81,11 +80,9 @@ func (s *localStorage) list(prefix string) ([]backupInfo, error) {
 	return candidates, nil
 }
 
-func (s *localStorage) delete(files []string) (errors []error) {
-	for _, file := range files {
-		if err := os.Remove(file); err != nil {
-			errors = append(errors, err)
-		}
+func (s *localStorage) delete(file string) error {
+	if err := os.Remove(file); err != nil {
+		return fmt.Errorf("delete: error removing file: %w", err)
 	}
-	return
+	return nil
 }

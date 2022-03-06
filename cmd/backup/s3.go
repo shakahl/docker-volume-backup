@@ -69,17 +69,14 @@ func (s *s3Storage) id() storageID {
 	return storageIDS3
 }
 
-func (s *s3Storage) copy(files []string) (errors []error) {
-	for _, file := range files {
-		_, name := path.Split(file)
-		if _, err := s.client.FPutObject(context.Background(), s.bucketName, filepath.Join(s.path, name), file, minio.PutObjectOptions{
-			ContentType: "application/tar+gzip",
-		}); err != nil {
-			errors = append(errors, fmt.Errorf("copy: error uploading backup to remote storage: %w", err))
-			continue
-		}
+func (s *s3Storage) copy(file string) error {
+	_, name := path.Split(file)
+	if _, err := s.client.FPutObject(context.Background(), s.bucketName, filepath.Join(s.path, name), file, minio.PutObjectOptions{
+		ContentType: "application/tar+gzip",
+	}); err != nil {
+		return fmt.Errorf("copy: error uploading backup to remote storage: %w", err)
 	}
-	return
+	return nil
 }
 
 func (s *s3Storage) list(prefix string) ([]backupInfo, error) {
@@ -97,19 +94,21 @@ func (s *s3Storage) list(prefix string) ([]backupInfo, error) {
 	return result, nil
 }
 
-func (s *s3Storage) delete(files []string) (errors []error) {
+func (s *s3Storage) delete(file string) error {
 	objectsCh := make(chan minio.ObjectInfo)
 	go func() {
-		for _, file := range files {
-			objectsCh <- minio.ObjectInfo{Key: file}
-		}
+		objectsCh <- minio.ObjectInfo{Key: file}
 		close(objectsCh)
 	}()
 	errChan := s.client.RemoveObjects(context.Background(), s.bucketName, objectsCh, minio.RemoveObjectsOptions{})
 	for result := range errChan {
 		if result.Err != nil {
-			errors = append(errors, result.Err)
+			return fmt.Errorf("delete: error deleting file: %w", result.Err)
 		}
 	}
-	return
+	return nil
+}
+
+func (s *s3Storage) symlink(string) error {
+	return errNotSupported
 }

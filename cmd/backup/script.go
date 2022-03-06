@@ -424,11 +424,22 @@ func (s *script) copyBackup() error {
 	}
 
 	for _, storage := range s.storages {
-		errors := storage.copy([]string{s.file})
-		if len(errors) != 0 {
-			return fmt.Errorf("copyBackup: error copying file: %w", join(errors...))
+		if err := storage.copy(s.file); err != nil {
+			return fmt.Errorf("copyBackup: error copying file for storage %s: %w", storage.id(), err)
 		}
-		s.logger.Info("Successfully moved a copy of backup %s to storage %s", s.file, storage.id())
+		s.logger.Infof("Successfully moved a copy of backup %s to storage %s", s.file, storage.id())
+
+		if s.c.BackupLatestSymlink == "" {
+			continue
+		}
+
+		if err := storage.symlink(s.file); err != nil {
+			if err == errNotSupported {
+				continue
+			}
+			return fmt.Errorf("copyBackup: error creating symlink for storage %s: %w", storage.id(), err)
+		}
+		s.logger.Info("Successfully created latest symlink")
 	}
 
 	return nil
@@ -467,7 +478,13 @@ func (s *script) pruneBackups() error {
 			s.logger.Warnf("The current configuration would delete all %d existing %s.", len(matches), storage.id())
 			s.logger.Warn("Refusing to do so, please check your configuration.")
 		} else {
-			errors := storage.delete(matches)
+			var errors []error
+			for _, match := range matches {
+				if err := storage.delete(match); err != nil {
+					errors = append(errors, err)
+				}
+			}
+
 			if len(errors) != 0 {
 				if stats, ok := s.stats.Storages[storage.id()]; ok {
 					stats.PruneErrors = uint(len(errors))
